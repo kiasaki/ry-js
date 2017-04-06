@@ -1,0 +1,10 @@
+{
+  "name": "ry-js",
+  "version": "1.0.0",
+  "main": "index.js",
+  "license": "MIT",
+  "dependencies": {
+    "terminal-canvas": "^2.0.0",
+    "terminal-kit": "^1.0.5"
+  }
+}
