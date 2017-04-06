@@ -1,3 +1,6 @@
+#!/usr/bin/env node
+let fs = require('fs');
+let path = require('path');
 let TermCanvas = require('terminal-canvas');
 let termKit = require('terminal-kit');
 let term = termKit.terminal;
@@ -10,6 +13,20 @@ function isAlpha(char) {
   let c = charCode(this._char);
   return (c >= charCode('a') && c <= charCode('z'))
     || (c >= charCode('A') && c <= charCode('Z'));
+}
+
+function padl(str, len, char=' ') {
+  while (str.length < len) {
+    str = char + str;
+  }
+  return str;
+}
+
+function padr(str, len, char=' ') {
+  while (str.length < len) {
+    str = str + char;
+  }
+  return str;
 }
 
 class Location {
@@ -83,7 +100,8 @@ class Hooks {
 class Styles {
   constructor() {
     this._styles = {
-      default: 0,
+      default: {fg: 15, bg: false},
+      statusbar: {fg: 0, bg: 15},
     };
   }
 
@@ -93,11 +111,10 @@ class Styles {
 
   set(name, value) {
     let parts = value.split(',');
-    this._styles[name] = termKit.ScreenBuffer.object2attr({
-      color: parts[0] && parts[0].length > 0 ? parts[0] : undefined,
-      bgColor: parts[1] && parts[1].length > 0 ? parts[1] : undefined,
-      bold: parts[2] === 'b',
-    });
+    this._styles[name] = {
+      fg: parts[0] && parts[0].length > 0 ? parseInt(parts[0]) : false,
+      bg: parts[1] && parts[1].length > 0 ? parseInt(parts[1]) : false,
+    };
   }
 }
 
@@ -196,6 +213,10 @@ KeyStroke.fromEvent = function(k) {
     return keyStroke.setSpecial('DEL');
   }
 
+  if (keyStroke._s_alt || keyStroke._s_ctrl || keyStroke._s_shift) {
+    rest = rest.toLowerCase();
+  }
+
   return keyStroke.setChar(rest);
 };
 
@@ -204,7 +225,9 @@ class Key {
     this._keys = [];
     let parts = rep.split(' ');
     for (let i in parts) {
-      this._keys.push(new KeyStroke(parts[i]));
+      if (parts[i] != '') {
+        this._keys.push(new KeyStroke(parts[i]));
+      }
     }
   }
 
@@ -215,6 +238,10 @@ class Key {
   matchesTail(k) {
     // TODO
   }
+}
+
+function k(rep) {
+  return new Key(rep);
 }
 
 
@@ -263,6 +290,21 @@ class Buffer {
   constructor() {
     this._data = [];
     this._modes = [];
+
+    this.name = '*unnamed*';
+    this.path = '';
+  }
+
+  addMode(mode) {
+    this._modes.push(mode);
+  }
+
+  modes() {
+    return this._modes;
+  }
+
+  shortPath() {
+    return this.path.replace(process.cwd()+'/', '').replace(process.env.HOME, '~');
   }
 }
 
@@ -292,11 +334,72 @@ class Buffers {
       }
     }
   }
+
+  len() {
+    return this._buffers.length;
+  }
+
+  openBuffer(filePath) {
+    let b = new Buffer();
+    try {
+      let fileInfo = fs.statSync(filePath);
+      if (fileInfo.isFile()) {
+        b.path = path.resolve(filePath);
+        b.data = fs.readFileSync(b.path, {encoding: 'utf8'}).split('\n');
+      } else if (fileInfo.isDirectory()) {
+        b.path = path.resolve(filePath);
+        b.data = ['dir'];
+      } else {
+        b.path = filePath;
+        b.data = [''];
+      }
+    } catch (e) {
+      b.path = filePath;
+      b.data = [''];
+    }
+    b.name = b.shortPath();
+
+    this.add(b);
+    return b;
+  }
+}
+
+const DEFAULT_CLIPBOARD = '_';
+
+class Clipboards {
+  constructor() {
+    this._clipbaords = {};
+  }
+
+  get(clipboard) {
+    return this._clipbaords[clipboard] || '';
+  }
+
+  set(clipboard = DEFAULT_CLIPBOARD, value = '') {
+    this._clipbaords[clipboard] = value;
+  }
 }
 
 class Config {
   constructor() {
     this._values = {};
+  }
+}
+
+class Messenger {
+  constructor() {
+    this._message = {};
+    this._message_type = {};
+  }
+
+  info(message) {
+    this._message = message;
+    this._message_type = 'type';
+  }
+
+  error(message) {
+    this._message = message;
+    this._message_type = 'error';
   }
 }
 
@@ -307,15 +410,31 @@ class Editor {
     this.styles = new Styles();
     this.config = new Config();
     this.buffers = new Buffers();
+    this.messenger = new Messenger();
+    this.clipboards = new Clipboards();
 
     this._mode = 'normal';
     this._cursor = new Location(0, 0);
+    this._lineOffset = 0;
+    this._buffer = null;
+    this._keys_entered = k('');
+    this._last_key = k('');
+  }
+
+  enterMode(mode) {
+    // TODO check mode exists
+    this._mode = mode;
+  }
+
+  setBuffer(bufferName) {
+    // TODO check buffer exists
+    this._buffer = this.buffers.find(bufferName);
   }
 
   clear() {
     let h = term.height;
     let w = term.width;
-    this.screen.foreground('white');
+    this.screen.foreground(15);
     this.screen.background(false);
     for (let l = 0; l < h; l++) {
       for (let c = 0; c < w; c++) {
@@ -325,19 +444,55 @@ class Editor {
     }
   }
 
+  write(style, x, y, text) {
+    this.screen.moveTo(x, y);
+    this.screen.foreground(style.fg);
+    this.screen.background(style.bg);
+    this.screen.write(text);
+  }
+
   render() {
+    let height = term.height, width = term.width;
+    let s = this.styles.get('default');
+    let ss = this.styles.get('statusbar');
+
     this.clear();
-    this.screen.moveTo(0, 0);
-    this.screen.foreground('white');
-    this.screen.background(false);
-    this.screen.write('$');
+
+    for (let l = this._lineOffset; l < height-2 && l < this._buffer.data.length; l++) {
+      this.write(s, 0, l, this._buffer.data[l]);
+    }
+
+    this.write(ss, 0, height-2, padr(' ' + this._buffer.name, width));
+
     this.screen.flush();
   }
 
   handle(keyStroke) {
-    this.stop();
     if (keyStroke._s_ctrl && keyStroke._char === 'q') {
       this.stop();
+    } else if (keyStroke._special === 'ESC') {
+      this.enterMode('normal');
+      this._keys_entered = k('');
+      this._last_key = k('');
+    } else {
+      this._keys_entered.append(keyStroke);
+
+      let match;
+      let currentBufferModes = this._buffer.modes();
+      for (let i in currentBufferModes) {
+        let mode = this.modes.find(currentBufferModes[i]);
+        if (mode && (match = mode.handle(this._keys_entered))) {
+          this._keys_entered = k('');
+          this._last_key = match;
+          return;
+        }
+      }
+
+      let mode = this.modes.find(this._mode);
+      if (mode && (match = mode.handle(this._keys_entered))) {
+        this._keys_entered = k('');
+        this._last_key = match;
+      }
     }
   }
 
@@ -350,23 +505,36 @@ class Editor {
     term.grabInput(true);
     term.on('key', function(name, matches, data) {
       self.handle(KeyStroke.fromEvent(name));
+      self.render();
+    });
+    process.on('uncaughtException', function(err) {
+      self.stop(err);
     });
     this.render();
   }
 
-  stop() {
+  stop(err) {
     term.grabInput(false);
     process.stdout.write('\u001b[?25h');
     process.stdout.write('\u001bc');
+    console.log(this._keys_entered);
+    if (err) {
+      console.error(err);
+    }
     process.exit(0);
   }
 }
 
 let E = new Editor();
 global.E = E;
-E.start();
 
-process.on('uncaughtException', function(err) {
-  E.stop();
-  console.error(err);
-});
+for (let i = 2; i < process.argv.length; i++) {
+  let b = E.buffers.openBuffer(process.argv[i]);
+  E.setBuffer(b.name);
+}
+if (E.buffers.len() === 0) {
+  let b = E.buffers.openBuffer('*scratch*');
+  E.setBuffer(b.name);
+}
+
+E.start();
