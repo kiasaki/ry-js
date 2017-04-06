@@ -23,6 +23,10 @@ terminal-canvas@^2.0.0:
   version "2.0.0"
   resolved "https://registry.yarnpkg.com/terminal-canvas/-/terminal-canvas-2.0.0.tgz#0052bf6b60a88ac0354b3cdb5573a821ac622892"
 
+"terminal-canvas@https://github.com/kiasaki/terminal-canvas.git":
+  version "0.0.0-development"
+  resolved "https://github.com/kiasaki/terminal-canvas.git#7797e66e99ee97dff0af1324e96b38c2956139f0"
+
 terminal-kit@^1.0.5:
   version "1.0.5"
   resolved "https://registry.yarnpkg.com/terminal-kit/-/terminal-kit-1.0.5.tgz#3563a9ccb89f777d25c15538d9a3b3a13a913d67"
